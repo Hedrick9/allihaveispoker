@@ -1,7 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Card from './Card';
 import PlayerSeat from './PlayerSeat';
 import ActionBar from './ActionBar';
+import HelpOverlay from './HelpOverlay';
+import SettingsModal from './SettingsModal';
+import Chat from './Chat';
+import SlotMachine from './SlotMachine';
 
 // Seat positions around the oval table (CSS style objects)
 // Ordered: bottom-center (you), then clockwise
@@ -22,9 +26,13 @@ const PHASE_LABEL = {
   turn: 'Turn',
   river: 'River',
   showdown: 'Showdown',
+  'waiting-for-players': 'Waiting for Players',
 };
 
-export default function Table({ state, myId, onAction }) {
+export default function Table({ state, myId, onAction, isHost, settings, onSettingsChange, chatMessages, slotsPool }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [slotOpen, setSlotOpen] = useState(false);
+  const me = state.players.find(p => p.id === myId);
   const { players, communityCards, pot, phase, lastAction, handResults } = state;
 
   // Reorder so "me" is at position 0, others go clockwise
@@ -37,6 +45,28 @@ export default function Table({ state, myId, onAction }) {
 
   return (
     <div className="table-screen">
+      <HelpOverlay />
+      <button className="overlay-btn settings-btn-fixed" onClick={() => setSettingsOpen(true)}>⚙</button>
+      <button className="overlay-btn slot-btn-fixed" onClick={() => setSlotOpen(true)}>🎰</button>
+      <Chat messages={chatMessages} myId={myId} />
+      {slotOpen && (
+        <SlotMachine
+          onClose={() => setSlotOpen(false)}
+          pool={slotsPool}
+          smallBlind={state.config.smallBlind}
+          myChips={me?.chips ?? 0}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          onChange={onSettingsChange}
+          onClose={() => setSettingsOpen(false)}
+          isHost={isHost}
+          gameConfig={state.config}
+        />
+      )}
+
       <div className="table-wrapper">
         <div className="table-felt">
 
@@ -86,7 +116,13 @@ export default function Table({ state, myId, onAction }) {
       </div>
 
       {/* Action bar outside the table */}
-      <ActionBar state={state} myId={myId} onAction={onAction} />
+      <ActionBar
+        state={state}
+        myId={myId}
+        onAction={onAction}
+        timerEnabled={settings.timerEnabled}
+        timerSeconds={settings.timerSeconds}
+      />
     </div>
   );
 }

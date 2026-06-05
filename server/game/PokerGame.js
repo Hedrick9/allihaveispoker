@@ -29,7 +29,6 @@ class PokerGame {
 
   addPlayer(id, name) {
     if (this.players.find(p => p.id === id)) return { error: 'Already in game' };
-    if (this.gameStarted) return { error: 'Game already started' };
     if (this.players.length >= 8) return { error: 'Table is full (max 8)' };
 
     this.players.push({
@@ -42,6 +41,8 @@ class PokerGame {
       isSB: false,
       isBB: false,
       eliminated: false,
+      disconnected: false,
+      pendingNextHand: this.gameStarted,
     });
     return { success: true };
   }
@@ -49,11 +50,12 @@ class PokerGame {
   removePlayer(id) {
     const idx = this.players.findIndex(p => p.id === id);
     if (idx === -1) return;
-    if (!this.gameStarted) {
+    // Remove cleanly if pre-game or still pending (never played a hand)
+    if (!this.gameStarted || this.players[idx].pendingNextHand) {
       this.players.splice(idx, 1);
       return;
     }
-    // Mid-game: treat as fold + eliminate
+    // Mid-game: fold and mark disconnected — chips stay visible until next hand
     const p = this.players[idx];
     const wasCurrentPlayer = this.currentPlayerIdx === idx;
     if (!p.folded) {
@@ -62,8 +64,14 @@ class PokerGame {
       this.actionQueue = this.actionQueue.filter(i => i !== idx);
       if (wasCurrentPlayer) this.currentPlayerIdx = this.actionQueue[0] ?? -1;
     }
-    p.eliminated = true;
-    if (wasCurrentPlayer) this._afterAction();
+    p.disconnected = true;
+    if (wasCurrentPlayer) {
+      this._afterAction();
+    } else {
+      // Non-current player left — check if only one player remains
+      const notFolded = this._notFolded();
+      if (notFolded.length === 1) this._handWon(this.players[notFolded[0]].id);
+    }
   }
 
   startGame() {
@@ -152,8 +160,20 @@ class PokerGame {
   }
 
   nextHand() {
+    // Activate anyone who joined mid-hand
+    this.players.forEach(p => { p.pendingNextHand = false; });
+
     const inGame = this._inGame();
-    if (inGame.length < 2) { this.phase = 'game-over'; return; }
+    if (inGame.length < 2) {
+      // Not enough players — clear the table and wait
+      this.phase = 'waiting-for-players';
+      this.communityCards = [];
+      this.pot = 0;
+      this.currentBet = 0;
+      this.lastAction = null;
+      this.handResults = null;
+      return;
+    }
     const pos = Math.max(0, inGame.indexOf(this.dealerIdx));
     this.dealerIdx = inGame[(pos + 1) % inGame.length];
     this._startHand();
@@ -191,6 +211,8 @@ class PokerGame {
             isYou: p.id === playerId,
             holeCards: revealCards ? p.holeCards : p.holeCards.map(() => null),
             cardCount: p.holeCards.length,
+            pendingNextHand: p.pendingNextHand || false,
+            disconnected: p.disconnected || false,
           };
         }),
     };
@@ -435,7 +457,7 @@ class PokerGame {
   _inGame() {
     return this.players
       .map((p, i) => ({ p, i }))
-      .filter(({ p }) => !p.eliminated && p.chips > 0)
+      .filter(({ p }) => !p.eliminated && p.chips > 0 && !p.pendingNextHand && !p.disconnected)
       .map(({ i }) => i);
   }
 
@@ -443,7 +465,7 @@ class PokerGame {
   _notFolded() {
     return this.players
       .map((p, i) => ({ p, i }))
-      .filter(({ p }) => !p.eliminated && !p.folded)
+      .filter(({ p }) => !p.eliminated && !p.folded && !p.pendingNextHand)
       .map(({ i }) => i);
   }
 }

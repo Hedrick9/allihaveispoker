@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import socket from './socket';
 import Lobby from './components/Lobby';
 import Table from './components/Table';
+
+const SESSION_KEY = 'poker_session';
 
 export default function App() {
   const [screen, setScreen] = useState('lobby'); // lobby | waiting-room | game
@@ -11,15 +13,34 @@ export default function App() {
   const [lobbyState, setLobbyState] = useState(null);
   const [gameState, setGameState] = useState(null);
   const [error, setError] = useState(null);
+  const [settings, setSettings] = useState({ timerEnabled: false, timerSeconds: 30 });
+  const [chatMessages, setChatMessages] = useState([]);
+  const [slotsPool, setSlotsPool] = useState(0);
+  const rejoinAttemptRef = useRef(false);
 
   useEffect(() => {
+    socket.on('connect', () => {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      try {
+        const { code, playerId } = JSON.parse(raw);
+        rejoinAttemptRef.current = true;
+        socket.emit('room:rejoin', { code, playerId });
+      } catch {
+        localStorage.removeItem(SESSION_KEY);
+      }
+    });
+
     socket.connect();
 
-    socket.on('room:joined', ({ code, playerId }) => {
+    socket.on('room:joined', ({ code, playerId, isHost: host }) => {
+      rejoinAttemptRef.current = false;
       setMyId(playerId);
       setRoomCode(code);
+      setIsHost(!!host);
       setScreen('waiting-room');
       setError(null);
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ code, playerId }));
     });
 
     socket.on('lobby:state', (state) => {
@@ -39,22 +60,32 @@ export default function App() {
       setLobbyState(null);
       setRoomCode(null);
       setMyId(null);
+      setChatMessages([]);
+      localStorage.removeItem(SESSION_KEY);
     });
 
     socket.on('error', (msg) => {
       setError(msg);
+      if (rejoinAttemptRef.current) {
+        rejoinAttemptRef.current = false;
+        localStorage.removeItem(SESSION_KEY);
+      }
     });
+
+    socket.on('chat:message', ({ playerId, name, text }) => {
+      setChatMessages(prev => [...prev, { playerId, name, text }]);
+    });
+
+    socket.on('slots:pool', ({ pool }) => setSlotsPool(pool));
 
     return () => socket.disconnect();
   }, []);
 
   function handleCreate({ playerName, startingChips, bigBlind }) {
-    setIsHost(true);
     socket.emit('room:create', { playerName, startingChips, bigBlind });
   }
 
   function handleJoin({ code, playerName }) {
-    setIsHost(false);
     socket.emit('room:join', { code, playerName });
   }
 
@@ -67,7 +98,18 @@ export default function App() {
   }
 
   if (screen === 'game' && gameState) {
-    return <Table state={gameState} myId={myId} onAction={handleAction} />;
+    return (
+      <Table
+        state={gameState}
+        myId={myId}
+        onAction={handleAction}
+        isHost={isHost}
+        settings={settings}
+        onSettingsChange={setSettings}
+        chatMessages={chatMessages}
+        slotsPool={slotsPool}
+      />
+    );
   }
 
   if (screen === 'waiting-room' && lobbyState) {

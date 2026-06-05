@@ -3,8 +3,9 @@ import Card from './Card';
 
 export default function PlayerSeat({ player, isBottom }) {
   const {
-    name, chips, currentRoundBet, folded, allIn,
+    name, chips, totalContributed, folded, allIn,
     isDealer, isSB, isBB, isCurrentPlayer, isYou, holeCards, cardCount,
+    pendingNextHand, disconnected,
   } = player;
 
   const badges = [];
@@ -13,8 +14,7 @@ export default function PlayerSeat({ player, isBottom }) {
   if (isBB) badges.push({ label: 'BB', cls: 'badge-blind' });
 
   return (
-    <div className={`seat ${isCurrentPlayer ? 'seat-active' : ''} ${folded ? 'seat-folded' : ''} ${isYou ? 'seat-you' : ''} ${isBottom ? 'seat-bottom' : ''}`}>
-      {/* Cards above/below seat depending on position */}
+    <div className={`seat ${isCurrentPlayer ? 'seat-active' : ''} ${folded ? 'seat-folded' : ''} ${isYou ? 'seat-you' : ''} ${isBottom ? 'seat-bottom' : ''} ${pendingNextHand ? 'seat-pending' : ''} ${disconnected ? 'seat-disconnected' : ''}`}>
       <div className="seat-cards">
         {cardCount > 0
           ? holeCards.map((card, i) => (
@@ -29,9 +29,14 @@ export default function PlayerSeat({ player, isBottom }) {
           {isYou ? <span className="you-label"> (you)</span> : null}
           {allIn ? <span className="allin-label"> ALL-IN</span> : null}
         </div>
-        <div className="seat-chips">{chips.toLocaleString()}</div>
-        {currentRoundBet > 0 && (
-          <div className="seat-bet">Bet: {currentRoundBet.toLocaleString()}</div>
+        {pendingNextHand
+          ? <div className="seat-pending-label">Next hand</div>
+          : disconnected
+          ? <div className="seat-pending-label">Offline · {chips.toLocaleString()}</div>
+          : <div className="seat-chips">{chips.toLocaleString()}</div>
+        }
+        {!pendingNextHand && totalContributed > 0 && (
+          <div className="seat-bet">In: {totalContributed.toLocaleString()}</div>
         )}
         {badges.map(b => (
           <span key={b.label} className={`badge ${b.cls}`}>{b.label}</span>

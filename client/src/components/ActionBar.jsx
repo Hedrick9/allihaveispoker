@@ -1,11 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
-export default function ActionBar({ state, myId, onAction }) {
+export default function ActionBar({ state, myId, onAction, timerEnabled, timerSeconds }) {
   const { currentPlayerId, currentBet, minRaise, phase } = state;
   const me = state.players.find(p => p.id === myId);
   const [raiseAmount, setRaiseAmount] = useState('');
+  const [timeLeft, setTimeLeft] = useState(null);
+  const onActionRef = useRef(onAction);
+  onActionRef.current = onAction;
 
-  if (!me || phase === 'showdown' || phase === 'waiting') return null;
+  const isMyTurn = currentPlayerId === myId;
+
+  useEffect(() => {
+    if (!timerEnabled || !isMyTurn || phase === 'showdown' || phase === 'waiting') {
+      setTimeLeft(null);
+      return;
+    }
+    setTimeLeft(timerSeconds);
+    const id = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(id);
+          onActionRef.current('fold');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isMyTurn, timerEnabled, timerSeconds, phase]);
+
+  if (!me || phase === 'showdown' || phase === 'waiting' || phase === 'waiting-for-players') return null;
+  if (me.pendingNextHand) {
+    return (
+      <div className="action-bar">
+        <span className="action-waiting">Sitting out — you'll be dealt in next hand…</span>
+      </div>
+    );
+  }
   if (currentPlayerId !== myId) {
     return (
       <div className="action-bar">
@@ -31,6 +62,9 @@ export default function ActionBar({ state, myId, onAction }) {
 
   return (
     <div className="action-bar">
+      {timeLeft !== null && (
+        <div className={`timer-countdown ${timeLeft <= 5 ? 'urgent' : ''}`}>{timeLeft}s</div>
+      )}
       <button className="btn-action btn-fold" onClick={() => onAction('fold')}>Fold</button>
 
       {canCheck ? (
