@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import socket from './socket';
 import Lobby from './components/Lobby';
 import Table from './components/Table';
+import { handleCallback as spotifyCallback, addToQueue as spotifyAddToQueue, isAuthenticated as spotifyIsAuthenticated } from './spotify';
 
 const SESSION_KEY = 'poker_session';
 
@@ -16,7 +17,23 @@ export default function App() {
   const [settings, setSettings] = useState({ timerEnabled: false, timerSeconds: 30 });
   const [chatMessages, setChatMessages] = useState([]);
   const [slotsPool, setSlotsPool] = useState(0);
+  const [jukeboxNowPlaying, setJukeboxNowPlaying] = useState(null);
+  const [jukeboxQueue, setJukeboxQueue] = useState([]);
+  const [jukeboxJamLink, setJukeboxJamLink] = useState('');
+  const [jukeboxRequests, setJukeboxRequests] = useState([]);
   const rejoinAttemptRef = useRef(false);
+  const isHostRef = useRef(false);
+  useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+
+  // Handle Spotify OAuth callback — exchange code for token, then resume normally
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      window.history.replaceState({}, '', window.location.pathname);
+      spotifyCallback(code).catch(console.error);
+    }
+  }, []);
 
   useEffect(() => {
     socket.on('connect', () => {
@@ -78,6 +95,19 @@ export default function App() {
 
     socket.on('slots:pool', ({ pool }) => setSlotsPool(pool));
 
+    socket.on('jukebox:now-playing', (data) => setJukeboxNowPlaying(data));
+    socket.on('jukebox:queue', (q) => setJukeboxQueue(q || []));
+    socket.on('jukebox:jam-link', ({ url }) => setJukeboxJamLink(url));
+    socket.on('jukebox:request', (req) => setJukeboxRequests(prev => [...prev, req]));
+
+    // Always-on auto-queue: fires whether or not the Jukebox panel is open
+    socket.on('jukebox:add-to-queue', ({ uri, name, artist }) => {
+      if (!isHostRef.current || !spotifyIsAuthenticated()) return;
+      spotifyAddToQueue(uri)
+        .then(() => socket.emit('jukebox:queued', { name, artist }))
+        .catch(console.error);
+    });
+
     return () => socket.disconnect();
   }, []);
 
@@ -102,12 +132,17 @@ export default function App() {
       <Table
         state={gameState}
         myId={myId}
+        roomCode={roomCode}
         onAction={handleAction}
         isHost={isHost}
         settings={settings}
         onSettingsChange={setSettings}
         chatMessages={chatMessages}
         slotsPool={slotsPool}
+        jukeboxNowPlaying={jukeboxNowPlaying}
+        jukeboxQueue={jukeboxQueue}
+        jukeboxJamLink={jukeboxJamLink}
+        jukeboxRequests={jukeboxRequests}
       />
     );
   }
@@ -164,9 +199,9 @@ function WaitingRoom({ roomCode, lobbyState, isHost, myId, onStart, error, onCle
           <button
             className="btn-primary"
             onClick={onStart}
-            disabled={lobbyState.players.length < 2}
+            disabled={lobbyState.players.length < 1}
           >
-            {lobbyState.players.length < 2 ? 'Waiting for players…' : 'Start Game'}
+            {lobbyState.players.length < 1 ? 'Waiting for players…' : 'Start Game'}
           </button>
         ) : (
           <p className="waiting-text">Waiting for host to start…</p>

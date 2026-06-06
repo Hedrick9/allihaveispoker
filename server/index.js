@@ -150,9 +150,11 @@ io.on('connection', (socket) => {
     socket.emit('room:joined', { code: code.toUpperCase(), playerId, isHost: false });
     if (room.game.gameStarted) {
       broadcast(room);
-      if (room.game.phase === 'waiting-for-players') {
-        scheduleNextHand(code);
-      }
+      if (room.game.phase === 'waiting-for-players') scheduleNextHand(code);
+      if (room.jukeboxJamLink) socket.emit('jukebox:jam-link', { url: room.jukeboxJamLink });
+      if (room.jukeboxNowPlaying) socket.emit('jukebox:now-playing', room.jukeboxNowPlaying);
+      if (room.jukeboxQueue) socket.emit('jukebox:queue', room.jukeboxQueue);
+      (room.jukeboxRequests || []).forEach(r => socket.emit('jukebox:request', r));
     } else {
       broadcastLobby(room);
     }
@@ -187,6 +189,10 @@ io.on('connection', (socket) => {
 
     socket.emit('room:joined', { code: String(code).toUpperCase(), playerId, isHost: wasHost });
     broadcast(room);
+    if (room.jukeboxJamLink) socket.emit('jukebox:jam-link', { url: room.jukeboxJamLink });
+    if (room.jukeboxNowPlaying) socket.emit('jukebox:now-playing', room.jukeboxNowPlaying);
+    if (room.jukeboxQueue) socket.emit('jukebox:queue', room.jukeboxQueue);
+    (room.jukeboxRequests || []).forEach(r => socket.emit('jukebox:request', r));
   });
 
   socket.on('game:start', () => {
@@ -223,6 +229,86 @@ io.on('connection', (socket) => {
     if (room.game.phase === 'showdown') {
       scheduleNextHand(code);
     }
+  });
+
+  socket.on('jukebox:now-playing', (data) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return;
+    room.jukeboxNowPlaying = data;
+    for (const [sid] of room.socketToPlayer) {
+      if (sid === socket.id) continue;
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.emit('jukebox:now-playing', data);
+    }
+  });
+
+  socket.on('jukebox:queue', (queue) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return;
+    room.jukeboxQueue = queue;
+    for (const [sid] of room.socketToPlayer) {
+      if (sid === socket.id) continue;
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.emit('jukebox:queue', queue);
+    }
+  });
+
+  socket.on('jukebox:jam-link', ({ url }) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return;
+    room.jukeboxJamLink = url;
+    io.to(code).emit('jukebox:jam-link', { url });
+  });
+
+  socket.on('jukebox:search', ({ query }) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room) return;
+    const hostSock = io.sockets.sockets.get(room.hostSocketId);
+    if (hostSock && room.hostSocketId !== socket.id) {
+      hostSock.emit('jukebox:search-for', { query: String(query).slice(0, 100), fromId: socket.id });
+    } else {
+      socket.emit('jukebox:search-results', { results: [] });
+    }
+  });
+
+  socket.on('jukebox:search-results', ({ results, toId }) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return;
+    const target = io.sockets.sockets.get(toId);
+    if (target) target.emit('jukebox:search-results', { results });
+  });
+
+  socket.on('jukebox:request', ({ uri, name, artist, albumArt, requestedBy }) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room) return;
+    if (!room.jukeboxRequests) room.jukeboxRequests = [];
+    const req = {
+      uri:         uri         ? String(uri).slice(0, 100)         : null,
+      name:        String(name || '').slice(0, 100),
+      artist:      artist      ? String(artist).slice(0, 100)      : null,
+      albumArt:    albumArt    ? String(albumArt).slice(0, 200)    : null,
+      requestedBy: String(requestedBy || '').slice(0, 30),
+    };
+    room.jukeboxRequests.push(req);
+    io.to(code).emit('jukebox:request', req);
+    // If the request includes a Spotify URI, forward to host for auto-queueing
+    if (req.uri) {
+      const hostSock = io.sockets.sockets.get(room.hostSocketId);
+      if (hostSock) hostSock.emit('jukebox:add-to-queue', req);
+    }
+  });
+
+  socket.on('jukebox:queued', ({ name, artist }) => {
+    const code = socketToRoom.get(socket.id);
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return;
+    io.to(code).emit('jukebox:queued', { name, artist });
   });
 
   socket.on('slots:spin', () => {

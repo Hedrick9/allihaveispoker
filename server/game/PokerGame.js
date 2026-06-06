@@ -1,6 +1,23 @@
 const { createDeck, shuffle } = require('./deck');
 const { evaluateHand, findWinners } = require('./evaluator');
 
+const TABLE_PROPS = [
+  '/images/cigar.png',
+  '/images/cigar-smoked.png',
+  '/images/used-cigarette.png',
+  '/images/colt45.png',
+  '/images/ColtSaa45.png',
+  '/images/marlboro.png',
+  '/images/marlboro_used.png',
+  '/images/olenglish800.png',
+  '/images/blow.png',
+  '/images/crack-pipe.png',
+  '/images/old-fashioned.png',
+  '/images/heinz-beans.png',
+  '/images/ranch-beans.png',
+  '/images/Belle.png',
+];
+
 class PokerGame {
   constructor({ startingChips = 1000, bigBlind = 20 } = {}) {
     this.config = {
@@ -31,6 +48,11 @@ class PokerGame {
     if (this.players.find(p => p.id === id)) return { error: 'Already in game' };
     if (this.players.length >= 8) return { error: 'Table is full (max 8)' };
 
+    const usedProps = new Set(this.players.map(p => p.prop));
+    const available = TABLE_PROPS.filter(p => !usedProps.has(p));
+    const pool = available.length > 0 ? available : TABLE_PROPS;
+    const prop = pool[Math.floor(Math.random() * pool.length)];
+
     this.players.push({
       id, name,
       chips: this.config.startingChips,
@@ -43,6 +65,7 @@ class PokerGame {
       eliminated: false,
       disconnected: false,
       pendingNextHand: this.gameStarted,
+      prop,
     });
     return { success: true };
   }
@@ -75,7 +98,7 @@ class PokerGame {
   }
 
   startGame() {
-    if (this.players.length < 2) return { error: 'Need at least 2 players' };
+    if (this.players.length < 1) return { error: 'Need at least 1 player' };
     this.gameStarted = true;
     const inGame = this._inGame();
     this.dealerIdx = inGame[Math.floor(Math.random() * inGame.length)];
@@ -213,6 +236,7 @@ class PokerGame {
             cardCount: p.holeCards.length,
             pendingNextHand: p.pendingNextHand || false,
             disconnected: p.disconnected || false,
+            prop: p.prop,
           };
         }),
     };
@@ -242,7 +266,7 @@ class PokerGame {
 
     // Reset ALL non-eliminated players for new hand (including last-hand folders)
     const inGame = this._inGame();
-    if (inGame.length < 2) { this.phase = 'game-over'; return; }
+    if (inGame.length < 2) { this.phase = 'waiting-for-players'; return; }
 
     inGame.forEach(i => {
       const p = this.players[i];
